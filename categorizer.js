@@ -55,7 +55,7 @@ async function classifyEmail({ subject, from, snippet }) {
         .replace("{{body}}", String(snippet || "").slice(0, 2000));
 
     const resp = await openai.chat.completions.create({
-        model: "gpt-5-mini",
+        model: "gpt-4.1-mini",
         temperature: 0,
         messages: [
             { role: "system", content: CLASSIFY_SYSTEM_PROMPT },
@@ -101,7 +101,7 @@ Return ONLY a JSON array, no markdown, no explanations. Example format:
 [{"coreFolder": "Applications > Job Alerts", "jobBoard": "LinkedIn", "role": "Software Engineer"}, {"coreFolder": "System Noise", "jobBoard": null, "role": null}, ...]`;
 
     const resp = await openai.chat.completions.create({
-        model: "gpt-5-mini",
+        model: "gpt-4.1-mini",
         temperature: 0,
         messages: [
             { role: "system", content: batchSystemPrompt },

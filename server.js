@@ -775,7 +775,7 @@ app.get("/email/:id/attachments", requireAuth, async (req, res) => {
         const accessToken = await getValidAccessToken({ userId: req.user.id, mailboxId });
 
         const attachmentsRes = await axios.get(
-            `https://graph.microsoft.com/v1.0/me/messages/${id}/attachments?$select=id,name,size,contentType,isInline,@odata.type,contentBytes`,
+            `https://graph.microsoft.com/v1.0/me/messages/${id}/attachments?$select=id,name,size,contentType,isInline,contentBytes`,
             { headers: { Authorization: `Bearer ${accessToken}` } }
         );
 
@@ -1015,6 +1015,100 @@ app.post("/email/:id/move", requireAuth, async (req, res) => {
     }
 });
 
+// Reply in same thread (Microsoft Graph message reply — keeps conversation thread)
+app.post("/me/messages/:messageId/reply", requireAuth, async (req, res) => {
+    const mailboxId = Number(req.query.mailboxId);
+    const messageId = req.params.messageId;
+    const { comment } = req.body;
+
+    if (!mailboxId) return res.status(400).json({ error: "mailboxId is required" });
+    if (!messageId) return res.status(400).json({ error: "messageId is required" });
+
+    const commentStr = (comment != null && comment !== "") ? String(comment).trim() : " ";
+
+    try {
+        await getMailboxRowOrThrow({ userId: req.user.id, mailboxId });
+        const accessToken = await getValidAccessToken({ userId: req.user.id, mailboxId });
+
+        await axios.post(
+            `https://graph.microsoft.com/v1.0/me/messages/${encodeURIComponent(messageId)}/reply`,
+            { comment: commentStr },
+            { headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" } }
+        );
+
+        res.status(202).json({ success: true });
+    } catch (err) {
+        console.error("REPLY ERROR:", err.response?.data || err);
+        const status = err.response?.status || err.status || 500;
+        const msg = err.response?.data?.error?.message || "Failed to send reply";
+        if (err.response?.status === 403 || err.response?.data?.error?.code === "ErrorAccessDenied") {
+            return res.status(403).json({
+                error: "This mailbox doesn't have permission to send mail. Disconnect and reconnect it in Manage Mailboxes to grant send permission.",
+                code: "SendPermissionRequired",
+            });
+        }
+        res.status(status).json({ error: msg });
+    }
+});
+
+// Send mail (reply/compose) via Microsoft Graph
+app.post("/me/send-mail", requireAuth, async (req, res) => {
+    const mailboxId = Number(req.query.mailboxId);
+    const { to, subject, body } = req.body;
+
+    if (!mailboxId) return res.status(400).json({ error: "mailboxId is required" });
+    if (!to || typeof to !== "string" || !to.trim()) {
+        return res.status(400).json({ error: "to (recipient email) is required" });
+    }
+
+    const toAddress = to.trim();
+    const subjectStr = (subject != null && subject !== "") ? String(subject).trim() : "";
+    const bodyStr = (body != null && body !== "") ? String(body).trim() : "";
+
+    try {
+        await getMailboxRowOrThrow({ userId: req.user.id, mailboxId });
+        const accessToken = await getValidAccessToken({ userId: req.user.id, mailboxId });
+
+        const payload = {
+            message: {
+                subject: subjectStr,
+                body: {
+                    contentType: "Text",
+                    content: bodyStr || " ",
+                },
+                toRecipients: [
+                    { emailAddress: { address: toAddress } },
+                ],
+            },
+            saveToSentItems: true,
+        };
+
+        await axios.post(
+            "https://graph.microsoft.com/v1.0/me/sendMail",
+            payload,
+            { headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" } }
+        );
+
+        res.status(202).json({ success: true });
+    } catch (err) {
+        console.error("SEND MAIL ERROR:", err.response?.data || err);
+        const status = err.response?.status || err.status || 500;
+        const graphError = err.response?.data?.error;
+        const code = graphError?.code || "";
+        const msg = graphError?.message || "Failed to send email";
+
+        // Access denied usually means mailbox was connected before Mail.Send was added — user must reconnect
+        if (status === 403 || code === "ErrorAccessDenied" || (typeof msg === "string" && msg.toLowerCase().includes("access is denied"))) {
+            return res.status(403).json({
+                error: "This mailbox doesn't have permission to send mail. Disconnect and reconnect it in Manage Mailboxes to grant send permission.",
+                code: "SendPermissionRequired",
+            });
+        }
+
+        res.status(status).json({ error: msg });
+    }
+});
+
 app.get("/thread/:conversationId", requireAuth, async (req, res) => {
     const mailboxId = Number(req.query.mailboxId);
     const { conversationId } = req.params;
@@ -1053,7 +1147,7 @@ app.get("/thread/:conversationId", requireAuth, async (req, res) => {
                 if (!m.hasAttachments) return { ...m, attachments: [] };
 
                 const attRes = await axios.get(
-                    `https://graph.microsoft.com/v1.0/me/messages/${m.id}/attachments?$select=id,name,contentType,size,isInline,@odata.type`,
+                    `https://graph.microsoft.com/v1.0/me/messages/${m.id}/attachments?$select=id,name,contentType,size,isInline`,
                     { headers: { Authorization: `Bearer ${accessToken}` } }
                 );
 
@@ -1193,9 +1287,9 @@ app.post("/folderCounts", requireAuth, async (req, res) => {
 
                         const body = r?.body || {};
 
-                        // Check for throttling in individual responses
+                        // Check for throttling in individual responses (Graph returns 429/ApplicationThrottled when rate limit is hit; we fall back to cache or 0)
                         if (r?.status === 429 || body?.error?.code === 'ApplicationThrottled' || body?.error?.code === 'ThrottledRequest') {
-                            console.warn(`⚠️ Throttled for folder ${t.path}, using cached or default values`);
+                            if (process.env.LOG_THROTTLE !== '0') console.warn(`⚠️ Throttled for folder ${t.path}, using cached or default values`);
                             // Use cached value if available, otherwise skip
                             const cached = folderCountCache.get(`${userId}::${mailboxId}::${t.folderId}`);
                             if (cached) {
@@ -1243,7 +1337,7 @@ app.post("/folderCounts", requireAuth, async (req, res) => {
                         err?.response?.status === 429;
 
                     if (isThrottled) {
-                        console.warn(`⚠️ Batch throttled, using cached values where available`);
+                        if (process.env.LOG_THROTTLE !== '0') console.warn(`⚠️ Batch throttled, using cached values where available`);
                         for (const t of group) {
                             const cached = folderCountCache.get(`${userId}::${mailboxId}::${t.folderId}`);
                             if (cached && Date.now() - cached.ts < FOLDER_COUNT_CACHE_TTL * 2) {
