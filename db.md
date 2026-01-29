@@ -7,6 +7,7 @@ CREATE TABLE users (
   email VARCHAR(191) NOT NULL,
   username VARCHAR(120) NOT NULL,
   password_hash VARCHAR(255) NOT NULL,
+  gpt_prompt TEXT NULL,
 
   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
@@ -15,7 +16,6 @@ CREATE TABLE users (
   UNIQUE KEY uq_users_email (email),
   UNIQUE KEY uq_users_username (username)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-
 
 ### 2. user_mailboxes
 CREATE TABLE user_mailboxes (
@@ -56,6 +56,7 @@ id                    BIGINT UNSIGNED       NO          PRI       —           
 email                 VARCHAR(191)          NO          UNI       —                   login email
 username              VARCHAR(120)          NO          UNI       —                   display/handle
 password_hash         VARCHAR(255)          NO                    —                   bcrypt/argon hash
+gpt_prompt            TEXT                  YES                   NULL                user-editable GPT reply prompt
 created_at            TIMESTAMP             NO                    CURRENT_TIMESTAMP       
 updated_at            TIMESTAMP             NO                    CURRENT_TIMESTAMP (on update)
 
