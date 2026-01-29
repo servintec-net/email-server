@@ -2,7 +2,7 @@
 const mysql = require("mysql2/promise");
 
 const SCOPES =
-  "openid profile offline_access Mail.Read Mail.ReadWrite User.Read";
+  "openid profile offline_access Mail.Read Mail.ReadWrite Mail.Send User.Read";
 
 const CLIENT_ID = process.env.CLIENT_ID;
 const CLIENT_SECRET = process.env.CLIENT_SECRET;
