@@ -52,8 +52,7 @@ async function classifyEmail({ subject, from, snippet }) {
         // support either placeholder variant (you had mismatch earlier)
         .replace("{{sender}}", from || "")
         .replace("{{subject}}", subject || "")
-        .replace("{{bodyPreview}}", String(snippet || "").slice(0, 5000))
-        .replace("{{body}}", String(snippet || "").slice(0, 5000));
+        .replace("{{body}}", String(snippet || "").slice(0, 2000));
 
     const resp = await openai.chat.completions.create({
         model: "gpt-5-mini",
@@ -78,7 +77,7 @@ async function classifyEmailsBatch(emails) {
 
     // Build batch prompt with numbered emails
     const emailData = emails.map((email, idx) => {
-        const snippet = String(email.snippet || "").slice(0, 3000); // Reduced per email for batch
+        const snippet = String(email.snippet || "").slice(0, 2000); // Reduced per email for batch
         return `EMAIL ${idx + 1}:
 From: ${email.from || ""}
 Subject: ${email.subject || ""}
