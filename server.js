@@ -249,6 +249,38 @@ app.patch("/me/password", requireAuth, async (req, res) => {
     }
 });
 
+const DEFAULT_GPT_PROMPT = "Write a formal, senior-level professional response suitable for job-related communication. Use precise, business-appropriate language.";
+
+app.get("/me/settings/gpt-prompt", requireAuth, async (req, res) => {
+    try {
+        const [[row]] = await POOL.query(
+            `SELECT gpt_prompt FROM users WHERE id = ? LIMIT 1`,
+            [req.user.id]
+        );
+        const prompt = row?.gpt_prompt != null && String(row.gpt_prompt).trim() !== ""
+            ? String(row.gpt_prompt).trim()
+            : DEFAULT_GPT_PROMPT;
+        res.json({ prompt });
+    } catch (err) {
+        console.error("GET gpt-prompt:", err);
+        res.status(500).json({ error: "Failed to load GPT prompt" });
+    }
+});
+
+app.put("/me/settings/gpt-prompt", requireAuth, async (req, res) => {
+    const prompt = req.body?.prompt != null ? String(req.body.prompt).trim() : "";
+    try {
+        await POOL.query(
+            `UPDATE users SET gpt_prompt = ? WHERE id = ?`,
+            [prompt || null, req.user.id]
+        );
+        res.json({ prompt: prompt || DEFAULT_GPT_PROMPT });
+    } catch (err) {
+        console.error("PUT gpt-prompt:", err);
+        res.status(500).json({ error: "Failed to save GPT prompt" });
+    }
+});
+
 app.get("/me/mailboxes", requireAuth, async (req, res) => {
     const limit = Math.min(Math.max(Number(req.query.limit) || 20, 1), 100);
     const offset = Math.max(Number(req.query.offset) || 0, 0);
@@ -1121,7 +1153,7 @@ app.get("/thread/:conversationId", requireAuth, async (req, res) => {
         const accessToken = await getValidAccessToken({ userId: req.user.id, mailboxId });
 
         const select =
-            "id,conversationId,subject,from,receivedDateTime,isRead,hasAttachments,body,bodyPreview";
+            "id,conversationId,subject,from,receivedDateTime,isRead,hasAttachments,body,bodyPreview,isDraft";
 
         let url =
             "https://graph.microsoft.com/v1.0/me/messages" +
