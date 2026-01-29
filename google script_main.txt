@@ -1,0 +1,139 @@
+function managerCheckRows() {
+    const SHEET_ID = '1y59w-d_livfyssMxSgz6DY162LiuvPx-QJb4z86uF4k';
+    const SHEET_NAME = 'StatusLog';
+    
+    const MAX_RUNNING = 4;
+    const MAX_RUN_MINUTES = 10; // skip row if "running" longer than this
+    const sheet = SpreadsheetApp.openById(SHEET_ID).getSheetByName(SHEET_NAME);
+    const data = sheet.getDataRange().getValues();
+  
+    // data[0] => header row
+    // Let's assume columns in zero-based indexing:
+    // E => Unread (4)
+    // F => Status (5)
+    // G => Start Time (6)
+    // H => End Time (7)
+    // I => Active (8)
+    // J => Comment (9)
+  
+    // We'll read/write the pointer in A1:
+    let currentPointer = parseInt(sheet.getRange('A1').getValue(), 10);
+    if (isNaN(currentPointer) || currentPointer < 2) {
+      currentPointer = 2; // fallback to row 2
+    }
+  
+    const now = new Date();
+    const thresholdMs = MAX_RUN_MINUTES * 60 * 1000;
+    const lastRow = sheet.getLastRow();
+  
+    // =========================
+    // PASS #1: skip any row that is "running" too long
+    // =========================
+    let runningCount = 0;
+    for (let i = 1; i < data.length; i++) {
+      const rowStatus = (data[i][5] || '').toString().toLowerCase(); // col F
+      const startTime = data[i][6];                                  // col G
+      const activeVal = (data[i][8] || '').toString().toLowerCase(); // col I
+  
+      if (activeVal === 'no') {
+        continue;
+      }
+      if (rowStatus === 'running') {
+        runningCount++;
+        if (startTime instanceof Date) {
+          const elapsed = now - startTime;
+          if (elapsed > thresholdMs) {
+            // forcibly skip
+            sheet.getRange(i+1, 6).setValue('');         // col F => ""
+            sheet.getRange(i+1, 8).setValue(new Date()); // col H => End Time
+            sheet.getRange(i+1, 10).setValue(`Skipped > ${MAX_RUN_MINUTES} min`);
+            runningCount--;
+  
+            // if we skipped pointer row, move pointer
+            if ((i+1) === currentPointer) {
+              currentPointer++;
+              if (currentPointer > lastRow) {
+                currentPointer = 2;
+              }
+            }
+          }
+        } else {
+          // no valid Start Time => skip
+          sheet.getRange(i+1, 6).setValue('');
+          sheet.getRange(i+1, 8).setValue(new Date());
+          sheet.getRange(i+1, 10).setValue("Skipped - no valid startTime");
+          runningCount--;
+  
+          if ((i+1) === currentPointer) {
+            currentPointer++;
+            if (currentPointer > lastRow) {
+              currentPointer = 2;
+            }
+          }
+        }
+      }
+    }
+  
+    // =========================
+    // PASS #2: if < MAX_RUNNING, pick new rows from pointer
+    // =========================
+    if (runningCount >= MAX_RUNNING) {
+      sheet.getRange('A1').setValue(currentPointer);
+      return;
+    }
+  
+    let attempts = 0;
+    const totalRows = data.length - 1; // ignoring the header
+    while (runningCount < MAX_RUNNING && attempts < totalRows) {
+      let dataIndex = currentPointer - 1;
+      if (dataIndex >= data.length) {
+        // wrap to row 2
+        currentPointer = 2;
+        dataIndex = currentPointer - 1;
+      }
+  
+      // Read from sheet directly:
+      const rowStatus = (sheet.getRange(currentPointer, 6).getValue() || '')
+                          .toString().toLowerCase();  // col F => Status
+      const activeVal = (sheet.getRange(currentPointer, 9).getValue() || '')
+                          .toString().toLowerCase();  // col I => Active
+      // Also read "Unread" from column E => col 5
+      const unreadCount = parseInt(sheet.getRange(currentPointer, 5).getValue() || 0, 10);
+  
+      // Condition: only run if Active=Yes, Status="", and Unread>0
+      if (activeVal === 'yes' && rowStatus === '' && unreadCount > 0) {
+        // Set to "running"
+        sheet.getRange(currentPointer, 6).setValue('running');   // col F
+        sheet.getRange(currentPointer, 7).setValue(new Date());  // col G => Start Time
+        sheet.getRange(currentPointer, 8).setValue('');          // col H => clear End Time
+        sheet.getRange(currentPointer, 10).setValue("Started by Tom");
+        runningCount++;
+      }
+      // else we skip that row (including if unread=0),
+      // just move pointer forward without setting "running"
+  
+      // move pointer
+      currentPointer++;
+      if (currentPointer > lastRow) {
+        currentPointer = 2;
+      }
+      attempts++;
+    }
+  
+    // store the updated pointer in A1
+    sheet.getRange('A1').setValue(currentPointer);
+  
+    // =========================
+    // PASS #3: (optional) update "xxx mins ago" in col K
+    // =========================
+    const updatedNow = new Date();
+    for (let i = 2; i <= lastRow; i++) {
+      const st = sheet.getRange(i, 7).getValue(); // col G => Start Time
+      if (st instanceof Date && !isNaN(st)) {
+        let elapsedMinutes = Math.round((updatedNow - st) / (60 * 1000));
+        sheet.getRange(i, 11).setValue(elapsedMinutes + " mins ago"); // col K
+      } else {
+        sheet.getRange(i, 11).setValue('');
+      }
+    }
+  }

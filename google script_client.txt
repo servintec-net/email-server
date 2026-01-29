@@ -1,0 +1,206 @@
+// ===== CONFIGURATION =====
+const OPENAI_API_KEY = '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';
+const GPT_ENDPOINT = 'https://api.openai.com/v1/chat/completions';
+const SHEET_ID = '1y59w-d_livfyssMxSgz6DY162LiuvPx-QJb4z86uF4k';
+let myFullName;
+let myTechStack;
+// Sheet name for your lookup data (for your own full name) and status logs
+const STATUS_LOG_SHEET = 'StatusLog';   // Sheet where status rows will be appended
+
+const waitRegex = /Please try again in ([0-9.]+)(ms|s)/;
+
+const CATEGORIES = [
+  { labelName: 'Interview Scheduling', keywords: [] },
+  { labelName: 'Reply Needed', keywords: [] },
+  { labelName: 'Skill assessment', keywords: [] },
+  { labelName: 'Job Alert', keywords: [] },
+  { labelName: 'Job Application Acknowledgement', keywords: [] },
+  { labelName: 'Job Application Rejection', keywords: [] },
+  { labelName: 'Other', keywords: [] },
+];
+
+
+function workerCheckAndDoGPT() {
+  const sheet = SpreadsheetApp.openById(SHEET_ID).getSheetByName(STATUS_LOG_SHEET);
+
+  const data = sheet.getDataRange().getValues();
+
+  const myEmail = Session.getActiveUser().getEmail().toLowerCase();
+  
+  // 1) Find the row that matches my email (Column D => index 3)
+  let myRowIndex = -1;
+  for (let i = 1; i < data.length; i++) {
+    const rowEmail = (data[i][3] || '').toString().toLowerCase();
+    if (rowEmail === myEmail) {
+      myRowIndex = i;
+      break;
+    }
+  }
+  if (myRowIndex < 0) {
+    Logger.log("No row found for email: " + myEmail);
+    return;
+  }
+
+  // columns in zero-based:
+  // E => 4, F => 5, G => 6, H => 7, I => 8, J => 9
+  const activeVal = (data[myRowIndex][8] || '').toString().toLowerCase();
+  if (activeVal !== 'yes') {
+    // not active
+    Logger.log("Row is not active. Exiting worker.");
+    return;
+  }
+
+  // 2) Always update "Unread" count
+  const unreadCount = getUnreadAndUnlabeledCount();
+  sheet.getRange(myRowIndex+1, 5).setValue(unreadCount);
+
+  // 3) Check status => must be "running"
+  let statusVal = (data[myRowIndex][5] || '').toString().toLowerCase();
+  if (statusVal !== 'running') {
+    Logger.log("Status != running, do nothing.");
+    return;
+  }
+
+  // 4) If running, do GPT classification (with mid-run checks)
+  Logger.log(`Row ${myRowIndex+1} => "running". Doing GPT now...`);
+  doGPTClassificationMidCheck(sheet, myRowIndex+1);
+
+  // 5) If STILL "running," set to "" + comment "Finished all unread"
+  statusVal = sheet.getRange(myRowIndex+1, 6).getValue(); 
+  if (statusVal === 'running') {
+    // worker finished normally
+    sheet.getRange(myRowIndex+1, 6).setValue('');
+    sheet.getRange(myRowIndex+1, 8).setValue(new Date()); // End Time
+    sheet.getRange(myRowIndex+1, 10).setValue("Finished all unread");
+    Logger.log("Worker done. Set comment to 'Finished all unread'.");
+  } else {
+    // manager must have forcibly cleared us
+    Logger.log("Mid-run: Status was cleared by Tom, so we stop now.");
+  }
+}
+
+function doGPTClassificationMidCheck(sheet, rowNum) {
+  const threads = GmailApp.search('is:unread has:nouserlabels');
+  Logger.log(`Found ${threads.length} unread unlabeled threads.`);
+
+  for (let i = 0; i < threads.length; i++) {
+    // Check mid-run status
+    const currentStatus = (sheet.getRange(rowNum, 6).getValue() || '').toString().toLowerCase();
+    if (currentStatus !== 'running') {
+      Logger.log("Manager ended us mid-run. Stop classification.");
+      return;
+    }
+
+    const thread = threads[i];
+    // 1) Extract subject & body
+    const messages = thread.getMessages();
+    const lastMsg = messages[messages.length - 1];
+    const subject = lastMsg.getSubject();
+    const body = lastMsg.getPlainBody();
+
+    // 2) Classify with GPT
+    const category = getGPTClassification(subject, body);
+    Logger.log("GPT returned category: " + category);
+
+    // 3) If we got a valid category, apply label
+    if (category) {
+      applyLabelToThread(thread, category);
+    } else {
+      Logger.log("No category returned; skipping label.");
+    }
+
+    // Optional short sleep to avoid flooding
+    Utilities.sleep(500);
+  }
+
+  Logger.log("Finished classifying all found threads.");
+}
+
+function getUnreadAndUnlabeledCount() {
+  const threads = GmailApp.search('is:unread has:nouserlabels');
+  return threads.length;
+}
+
+function getGPTClassification(subject, body) {
+  const MAX_RETRIES = 5;
+  let attempt = 0;
+  let lastError;
+  while (attempt < MAX_RETRIES) {
+    attempt++;
+    try {
+      const systemPrompt = 
+        `You are an assistant that classifies emails. 
+        Given the categories: ${CATEGORIES.map(cat => cat.labelName).join(', ')}.
+        Classify the following email into one of those categories: Message receiving notification should be categorized as REPLY NEEDED. Request for EEO information should be categorized as JOB APPLICATION ACKNOWLEDGEMENT. Respond with only the category of email`;
+      const userPrompt = `Subject: ${subject}\nBody: ${body}`;
+      const payload = {
+        model: 'gpt-4o-mini',  // Change if needed (e.g., "gpt-3.5-turbo")
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: userPrompt }
+        ],
+        max_tokens: 20,
+        temperature: 0
+      };
+      const options = {
+        method: 'post',
+        contentType: 'application/json',
+        headers: { 'Authorization': `Bearer ${OPENAI_API_KEY}` },
+        payload: JSON.stringify(payload),
+        muteHttpExceptions: true
+      };
+      const response = UrlFetchApp.fetch(GPT_ENDPOINT, options);
+      const statusCode = response.getResponseCode();
+      const responseText = response.getContentText();
+      Logger.log(`Attempt #${attempt}, status: ${statusCode}`);
+      Logger.log(`Response text: ${responseText}`);
+      if (statusCode === 200) {
+        const json = JSON.parse(responseText);
+        if (json.choices && json.choices.length > 0) {
+          const gptOutput = json.choices[0].message.content.trim();
+          Logger.log('Raw GPT Output: ' + gptOutput);
+          return gptOutput;
+        }
+        Logger.log('No valid "choices" in API response');
+        return null;
+      } else {
+        const json = JSON.parse(responseText);
+        if (json.error && json.error.code === 'rate_limit_exceeded') {
+          let waitTime = 3000;
+          const match = waitRegex.exec(json.error.message);
+          if (match && match[1] && match[2]) {
+            let value = parseFloat(match[1]);
+            if (match[2] === 's') value *= 1000;
+            waitTime = Math.round(value + 1000);
+          }
+          Logger.log(`Rate limit hit. Waiting for ${waitTime} ms...`);
+          Utilities.sleep(waitTime);
+        } else {
+          Logger.log('Non-rate-limit error: ' + responseText);
+          lastError = json.error ? json.error.message : 'Unknown error';
+          break;
+        }
+      }
+    } catch (e) {
+      Logger.log('Error in getGPTClassification: ' + e);
+      lastError = e.toString();
+      return null;
+    }
+  }
+  return null;
+}
+
+function applyLabelToThread(thread, labelName) {
+  Logger.log('Attempting to apply label: ' + labelName);
+  try {
+    let label = GmailApp.getUserLabelByName(labelName);
+    if (!label) {
+      label = GmailApp.createLabel(labelName);
+      Logger.log('Label created: ' + labelName);
+    }
+    thread.addLabel(label);
+    Logger.log('Label applied to thread: ' + thread.getFirstMessageSubject());
+  } catch (e) {
+    Logger.log('Error applying label: ' + e);
+  }
+}
