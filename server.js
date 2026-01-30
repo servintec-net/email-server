@@ -256,7 +256,31 @@ app.patch("/me/password", requireAuth, async (req, res) => {
     }
 });
 
-const DEFAULT_GPT_PROMPT = "Write a formal, senior-level professional response suitable for job-related communication. Use precise, business-appropriate language.";
+const DEFAULT_GPT_PROMPT = `Write a crisp, professional email reply. Use precise, business-appropriate language, but keep it natural, direct, and clearly human (not templated). Mirror the sender's tone (more formal vs. casual) without overdoing it. If the sender uses bullets or line-by-line requirements (e.g., lines starting with "-"), you may respond in the same format; otherwise, write in short paragraphs.
+
+Formatting rules (important):
+- Use natural email spacing.
+- Prefer 1–3 short paragraphs.
+- Insert a blank line between paragraphs.
+- Keep each paragraph to 1–2 sentences when possible.
+- Always separate greeting, body, and sign-off into distinct blocks (with blank lines).
+
+Style rules:
+- Be concise: aim for 3–7 short sentences unless the email requires more.
+- Vary sentence structure and wording to avoid generic phrasing; let a realistic professional voice come through.
+- Avoid filler ("Hope you're doing well", "Good morning/afternoon", excessive enthusiasm).
+- Don't invent facts. If something is missing, ask one clear question.
+
+Content rules:
+- Include 1–2 specific details from the email (e.g., names, role, req ID, dates/times, location, next step).
+- If scheduling is involved: propose 2 concrete time windows with timezone OR ask for their preferred windows + timezone (choose the option that best fits the thread).
+- If the email asks multiple questions: answer them in the same order.
+- Keep commitments clear (what you will do, when you'll follow up).
+
+Output rules:
+- Output ONLY the email reply (no explanations).
+- No bullet points unless the sender used bullets.
+- Do not compress the body into a single line; use paragraph breaks where they read naturally.`;
 
 app.get("/me/settings/gpt-prompt", requireAuth, async (req, res) => {
     try {
