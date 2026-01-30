@@ -22,7 +22,14 @@ const {
 
 const JWT_SECRET = APP_JWT_SECRET;
 const { runCategorizer } = require("./categorizer");
-const { collapseToLatestPerConversation } = require("./helper");
+const {
+    collapseToLatestPerConversation,
+    htmlToText,
+    getFirstNameFromSender,
+    pickGreeting,
+    pickSignoff,
+} = require("./helper");
+const OpenAI = require("openai");
 const { getValidAccessToken, getMailboxRowOrThrow } = require("./token");
 
 const app = express();
@@ -51,7 +58,7 @@ wss.on("connection", (ws) => {
                     ws.send(JSON.stringify({ type: "auth", ok: false }));
                 }
             }
-        } catch (_) {}
+        } catch (_) { }
     });
     ws.on("close", () => {
         if (userId != null && wsClientsByUserId.has(userId)) {
@@ -66,7 +73,7 @@ function broadcastToUser(userId, payload) {
     if (!clients) return;
     const str = typeof payload === "string" ? payload : JSON.stringify(payload);
     for (const ws of clients) {
-        if (ws.readyState === 1) try { ws.send(str); } catch (_) {}
+        if (ws.readyState === 1) try { ws.send(str); } catch (_) { }
     }
 }
 
@@ -278,6 +285,68 @@ app.put("/me/settings/gpt-prompt", requireAuth, async (req, res) => {
     } catch (err) {
         console.error("PUT gpt-prompt:", err);
         res.status(500).json({ error: "Failed to save GPT prompt" });
+    }
+});
+
+// Generate AI reply draft: user's GPT prompt + mailbox name (myName), sender name, subject, content (body only, HTML stripped to plain text, 2000 chars)
+
+app.post("/me/ai-draft", requireAuth, async (req, res) => {
+    const subject = req.body?.subject != null ? String(req.body.subject).trim() : "";
+    const myName = req.body?.myName != null ? String(req.body.myName).trim() : "";
+    const senderName = req.body?.senderName != null ? String(req.body.senderName).trim() : "";
+    let content = req.body?.content != null ? String(req.body.content) : "";
+    if (typeof content !== "string") content = "";
+    const plainContent = htmlToText(content);
+    const contentSliced = plainContent.slice(0, 2000);
+
+    const emailContext = [
+        myName ? `You are replying as: ${myName}` : null,
+        senderName ? `Reply to: ${senderName}` : null,
+        subject ? `Subject: ${subject}` : null,
+        `Content:\n${contentSliced}`,
+    ].filter(Boolean).join("\n\n");
+
+    try {
+        const [[row]] = await POOL.query(
+            `SELECT gpt_prompt FROM users WHERE id = ? LIMIT 1`,
+            [req.user.id]
+        );
+        const systemPrompt = row?.gpt_prompt != null && String(row.gpt_prompt).trim() !== ""
+            ? String(row.gpt_prompt).trim()
+            : DEFAULT_GPT_PROMPT;
+
+        const firstName = getFirstNameFromSender(senderName)
+        const greeting = pickGreeting(firstName)
+        const signoff = pickSignoff()
+
+        const apiKey = process.env.OPENAI_API_KEY;
+        if (!apiKey) {
+            return res.status(503).json({ error: "AI draft is not configured (missing OPENAI_API_KEY)." });
+        }
+        const openai = new OpenAI({ apiKey });
+        const temperature = 0.5 + Math.random() * 0.3;
+        const resp = await openai.chat.completions.create({
+            model: "gpt-4.1-mini",
+            temperature,
+            messages: [
+                { role: "system", content: systemPrompt },
+                {
+                    role: "user", content: `
+                    Use this greeting EXACTLY as the first line:
+${greeting}
+Use this sign-off EXACTLY:
+${signoff}
+                    \n\nReply to this email. Write only the reply body (no subject, no headers).\n\n${emailContext}`
+                },
+            ],
+        });
+        const draft = resp.choices?.[0]?.message?.content?.trim() || "";
+        res.json({ draft });
+    } catch (err) {
+        console.error("POST ai-draft:", err?.response?.data || err);
+        const status = err?.response?.status || err?.status || 500;
+        const msg = err?.response?.data?.error?.message || err?.message || "Failed to generate draft.";
+        res.status(status).json({ error: msg });
     }
 });
 
@@ -709,7 +778,7 @@ app.get("/emails", requireAuth, async (req, res) => {
                 `?$select=${selectFields}` +
                 "&$orderby=receivedDateTime desc" +
                 `&$top=${top}`;
-            
+
             if (skip > 0) {
                 url += `&$skip=${skip}`;
             }
@@ -727,7 +796,7 @@ app.get("/emails", requireAuth, async (req, res) => {
             const collapsed = collapseToLatestPerConversation(msgs);
             const hasMore = (data.value || []).length === top; // If we got exactly 'top' items, there might be more
 
-            return res.json({ 
+            return res.json({
                 value: collapsed,
                 hasMore: hasMore,
                 skip: skip + collapsed.length
@@ -740,7 +809,7 @@ app.get("/emails", requireAuth, async (req, res) => {
             `?$select=${selectFields}` +
             "&$orderby=receivedDateTime desc" +
             `&$top=${top}`;
-        
+
         let junkURL =
             "https://graph.microsoft.com/v1.0/me/mailFolders/JunkEmail/messages" +
             `?$select=${selectFields}` +
@@ -763,7 +832,7 @@ app.get("/emails", requireAuth, async (req, res) => {
         const combined = collapseToLatestPerConversation([...inbox, ...junk]);
         const hasMore = (inboxRes.data.value || []).length === top || (junkRes.data.value || []).length === top;
 
-        res.json({ 
+        res.json({
             value: combined,
             hasMore: hasMore,
             skip: skip + combined.length
@@ -1303,7 +1372,7 @@ app.post("/folderCounts", requireAuth, async (req, res) => {
                     for (let i = 0; i < group.length; i++) {
                         const t = group[i];
                         const r = responses.find((x) => String(x.id) === String(i + 1));
-                        
+
                         // Handle missing response
                         if (!r) {
                             console.warn(`⚠️ No response for folder ${t.path}, using cached or default values`);
