@@ -162,6 +162,8 @@ async function moveJunkToInbox(accessToken) {
 
 async function getOrCreateChildFolder(accessToken, parentId, displayName) {
     const name = String(displayName || "").trim().replace(/,.*$/, "").trim() || String(displayName || "").trim();
+    // Never create a child folder named "Inbox" under the real Inbox (avoids Inbox/Inbox and "Inbox,Inbox" recurrence)
+    if (parentId === "inbox" && (name || "").toLowerCase() === "inbox") return "inbox";
     const res = await axios.get(
         `https://graph.microsoft.com/v1.0/me/mailFolders/${parentId}/childFolders?$top=200&$select=id,displayName`,
         { headers: { Authorization: `Bearer ${accessToken}` } }

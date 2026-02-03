@@ -663,6 +663,8 @@ app.get("/auth/callback", async (req, res) => {
 
 async function getOrCreateChildFolder(accessToken, parentId, displayName) {
     const name = String(displayName || "").trim().replace(/,.*$/, "").trim() || String(displayName).trim();
+    // Never create a child folder named "Inbox" under the real Inbox (avoids Inbox/Inbox and "Inbox,Inbox" recurrence)
+    if (parentId === "inbox" && (name || "").toLowerCase() === "inbox") return "inbox";
     const res = await axios.get(
         `https://graph.microsoft.com/v1.0/me/mailFolders/${parentId}/childFolders?$top=200&$select=id,displayName`,
         { headers: { Authorization: `Bearer ${accessToken}` } }
@@ -729,15 +731,12 @@ async function resolveFolderIdFromPath(accessToken, mailboxId, folderPath) {
             folderIdCache.set(key, { id: "inbox", ts: Date.now() });
             return "inbox";
         }
-        if (parentId === null) {
-            parentId = "inbox";
-            pathSoFar = "Inbox";
-            folderIdCache.set(`${mailboxId}::Inbox`, { id: "inbox", ts: Date.now() });
-            startIdx = 1;
-        }
+        // Always use well-known inbox when path starts with Inbox (ignore cache to avoid building under duplicate Inbox/Inbox)
+        parentId = "inbox";
+        pathSoFar = "Inbox";
+        folderIdCache.set(`${mailboxId}::Inbox`, { id: "inbox", ts: Date.now() });
         parts = parts.slice(1);
-        const resolvedCount = pathSoFar ? pathSoFar.split(" > ").length - 1 : 0;
-        for (let i = resolvedCount; i < parts.length; i++) {
+        for (let i = 0; i < parts.length; i++) {
             const name = parts[i];
             parentId = await getOrCreateChildFolder(accessToken, parentId, name);
             pathSoFar = pathSoFar ? pathSoFar + " > " + name : name;
