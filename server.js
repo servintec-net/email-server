@@ -765,6 +765,9 @@ app.get("/emails", requireAuth, async (req, res) => {
     const category = req.query.category ? decodeURIComponent(String(req.query.category)) : null;
     const top = Number(req.query.top || 50);
     const skip = Number(req.query.skip || 0);
+    const q = req.query.q ? decodeURIComponent(String(req.query.q).trim()) : null;
+    const searchParam = q ? "&$search=" + encodeURIComponent('"' + String(q).replace(/"/g, "") + '"') : "";
+    const orderByParam = q ? "" : "&$orderby=receivedDateTime desc";
 
     if (!mailboxId) return res.status(400).json({ error: "mailboxId is required" });
 
@@ -783,8 +786,9 @@ app.get("/emails", requireAuth, async (req, res) => {
                 `https://graph.microsoft.com/v1.0/me/messages` +
                 `?$filter=categories/any(c: c eq '${escaped}')` +
                 `&$select=${selectFields}` +
-                "&$orderby=receivedDateTime desc" +
-                `&$top=${top}`;
+                orderByParam +
+                `&$top=${top}` +
+                searchParam;
             if (skip > 0) url += `&$skip=${skip}`;
 
             const { data } = await axios.get(url, {
@@ -815,8 +819,9 @@ app.get("/emails", requireAuth, async (req, res) => {
             let url =
                 `https://graph.microsoft.com/v1.0/me/mailFolders/${folderId}/messages` +
                 `?$select=${selectFields}` +
-                "&$orderby=receivedDateTime desc" +
-                `&$top=${top}`;
+                orderByParam +
+                `&$top=${top}` +
+                searchParam;
 
             if (skip > 0) {
                 url += `&$skip=${skip}`;
@@ -851,8 +856,9 @@ app.get("/emails", requireAuth, async (req, res) => {
                     const url =
                         `https://graph.microsoft.com/v1.0/me/mailFolders/${folderId}/messages` +
                         `?$select=${selectFields}` +
-                        "&$orderby=receivedDateTime desc" +
-                        `&$top=${perFolderTop}`;
+                        orderByParam +
+                        `&$top=${perFolderTop}` +
+                        searchParam;
                     const { data } = await axios.get(url, {
                         headers: { Authorization: `Bearer ${accessToken}` },
                     });
