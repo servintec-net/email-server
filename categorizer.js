@@ -161,23 +161,35 @@ async function moveJunkToInbox(accessToken) {
 }
 
 async function getOrCreateChildFolder(accessToken, parentId, displayName) {
+    const name = String(displayName || "").trim().replace(/,.*$/, "").trim() || String(displayName || "").trim();
     const res = await axios.get(
         `https://graph.microsoft.com/v1.0/me/mailFolders/${parentId}/childFolders?$top=200&$select=id,displayName`,
         { headers: { Authorization: `Bearer ${accessToken}` } }
     );
 
-    const existing = (res.data.value || []).find(
-        (f) => String(f.displayName || "").toLowerCase() === String(displayName || "").toLowerCase()
-    );
+    const list = res.data.value || [];
+    const existing = list.find((f) => String(f.displayName || "").toLowerCase() === name.toLowerCase());
     if (existing) return existing.id;
 
-    const created = await axios.post(
-        `https://graph.microsoft.com/v1.0/me/mailFolders/${parentId}/childFolders`,
-        { displayName },
-        { headers: { Authorization: `Bearer ${accessToken}` } }
-    );
-
-    return created.data.id;
+    try {
+        const created = await axios.post(
+            `https://graph.microsoft.com/v1.0/me/mailFolders/${parentId}/childFolders`,
+            { displayName: name },
+            { headers: { Authorization: `Bearer ${accessToken}` } }
+        );
+        return created.data.id;
+    } catch (err) {
+        const code = err?.response?.data?.error?.code;
+        if (code === "ErrorFolderExists" || (err?.response?.status === 400 && String(err?.response?.data?.error?.message || "").includes("already exists"))) {
+            const retry = await axios.get(
+                `https://graph.microsoft.com/v1.0/me/mailFolders/${parentId}/childFolders?$top=200&$select=id,displayName`,
+                { headers: { Authorization: `Bearer ${accessToken}` } }
+            );
+            const found = (retry.data.value || []).find((f) => String(f.displayName || "").toLowerCase() === name.toLowerCase());
+            if (found) return found.id;
+        }
+        throw err;
+    }
 }
 
 async function ensureFolderPath(accessToken, parts) {

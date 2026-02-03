@@ -662,23 +662,35 @@ app.get("/auth/callback", async (req, res) => {
 });
 
 async function getOrCreateChildFolder(accessToken, parentId, displayName) {
+    const name = String(displayName || "").trim().replace(/,.*$/, "").trim() || String(displayName).trim();
     const res = await axios.get(
         `https://graph.microsoft.com/v1.0/me/mailFolders/${parentId}/childFolders?$top=200&$select=id,displayName`,
         { headers: { Authorization: `Bearer ${accessToken}` } }
     );
 
-    const existing = (res.data.value || []).find(
-        (f) => (f.displayName || "").toLowerCase() === String(displayName).toLowerCase()
-    );
+    const list = res.data.value || [];
+    const existing = list.find((f) => (f.displayName || "").toLowerCase() === name.toLowerCase());
     if (existing) return existing.id;
 
-    const created = await axios.post(
-        `https://graph.microsoft.com/v1.0/me/mailFolders/${parentId}/childFolders`,
-        { displayName },
-        { headers: { Authorization: `Bearer ${accessToken}` } }
-    );
-
-    return created.data.id;
+    try {
+        const created = await axios.post(
+            `https://graph.microsoft.com/v1.0/me/mailFolders/${parentId}/childFolders`,
+            { displayName: name },
+            { headers: { Authorization: `Bearer ${accessToken}` } }
+        );
+        return created.data.id;
+    } catch (err) {
+        const code = err?.response?.data?.error?.code;
+        if (code === "ErrorFolderExists" || (err?.response?.status === 400 && String(err?.response?.data?.error?.message || "").includes("already exists"))) {
+            const retry = await axios.get(
+                `https://graph.microsoft.com/v1.0/me/mailFolders/${parentId}/childFolders?$top=200&$select=id,displayName`,
+                { headers: { Authorization: `Bearer ${accessToken}` } }
+            );
+            const found = (retry.data.value || []).find((f) => (f.displayName || "").toLowerCase() === name.toLowerCase());
+            if (found) return found.id;
+        }
+        throw err;
+    }
 }
 
 async function resolveFolderIdFromPath(accessToken, mailboxId, folderPath) {
@@ -794,8 +806,11 @@ app.get("/emails", requireAuth, async (req, res) => {
             });
         }
 
-        if (folderPath) {
-            const folderId = await resolveFolderIdFromPath(accessToken, mailboxId, folderPath);
+        const folderPaths = folderPath == null ? [] : (Array.isArray(folderPath) ? folderPath : [folderPath]);
+
+        if (folderPaths.length === 1) {
+            const singlePath = folderPaths[0];
+            const folderId = await resolveFolderIdFromPath(accessToken, mailboxId, singlePath);
 
             let url =
                 `https://graph.microsoft.com/v1.0/me/mailFolders/${folderId}/messages` +
@@ -814,16 +829,61 @@ app.get("/emails", requireAuth, async (req, res) => {
             const msgs = (data.value || []).map((m) => ({
                 ...m,
                 categories: m.categories || [],
-                folderPath,
+                folderPath: singlePath,
             }));
 
             const collapsed = collapseToLatestPerConversation(msgs);
-            const hasMore = (data.value || []).length === top; // If we got exactly 'top' items, there might be more
+            const hasMore = (data.value || []).length === top;
 
             return res.json({
                 value: collapsed,
                 hasMore: hasMore,
                 skip: skip + collapsed.length
+            });
+        }
+
+        if (folderPaths.length > 1) {
+            const perFolderTop = Math.min(200, skip + top);
+            const allMsgs = [];
+            for (const fp of folderPaths) {
+                try {
+                    const folderId = await resolveFolderIdFromPath(accessToken, mailboxId, fp);
+                    const url =
+                        `https://graph.microsoft.com/v1.0/me/mailFolders/${folderId}/messages` +
+                        `?$select=${selectFields}` +
+                        "&$orderby=receivedDateTime desc" +
+                        `&$top=${perFolderTop}`;
+                    const { data } = await axios.get(url, {
+                        headers: { Authorization: `Bearer ${accessToken}` },
+                    });
+                    const list = (data.value || []).map((m) => ({
+                        ...m,
+                        categories: m.categories || [],
+                        folderPath: fp,
+                    }));
+                    allMsgs.push(...list);
+                } catch (err) {
+                    console.warn(`Failed to fetch folder ${fp}:`, err?.response?.status || err.message);
+                }
+            }
+            const byId = new Map();
+            for (const m of allMsgs) {
+                const existing = byId.get(m.id);
+                if (!existing || new Date(m.receivedDateTime) > new Date(existing.receivedDateTime)) {
+                    byId.set(m.id, m);
+                }
+            }
+            const merged = Array.from(byId.values()).sort(
+                (a, b) => new Date(b.receivedDateTime) - new Date(a.receivedDateTime)
+            );
+            const collapsed = collapseToLatestPerConversation(merged);
+            const slice = collapsed.slice(skip, skip + top);
+            const hasMore = collapsed.length > skip + top;
+
+            return res.json({
+                value: slice,
+                hasMore,
+                skip: skip + slice.length,
             });
         }
 
