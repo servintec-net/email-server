@@ -1591,8 +1591,10 @@ app.post("/folderCounts", requireAuth, async (req, res) => {
     await requestPromise;
 });
 
-server.listen(4000, () => {
-    console.log("🚀 Server running at http://localhost:4000 (WebSocket /ws)");
+const PORT = process.env.PORT || 4000;
+
+server.listen(PORT, () => {
+    console.log(`🚀 Server running on port ${PORT}(WebSocket / ws)`);
     // Trigger categorization immediately on server start
     setTimeout(() => {
         console.log("🚀 Triggering initial categorization on server start...");

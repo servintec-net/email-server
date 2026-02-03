@@ -1,6 +1,7 @@
 # DB
 
 ### 1. users
+USE servjrey_Servintec;
 CREATE TABLE users (
   id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
 
@@ -18,6 +19,7 @@ CREATE TABLE users (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 ### 2. user_mailboxes
+USE servjrey_Servintec;
 CREATE TABLE user_mailboxes (
   id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
   user_id BIGINT UNSIGNED NOT NULL,
