@@ -1598,6 +1598,8 @@ app.post("/folderCounts", requireAuth, async (req, res) => {
     await requestPromise;
 });
 
+app.get("/health", (req, res) => res.json({ ok: true }));
+
 server.listen(PORT, () => {
     console.log(`🚀 Server running on port ${PORT}(WebSocket / ws)`);
     // Trigger categorization immediately on server start
