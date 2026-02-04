@@ -33,11 +33,20 @@ const OpenAI = require("openai");
 const { getValidAccessToken, getMailboxRowOrThrow } = require("./token");
 
 const app = express();
-app.use(cors());
+const allowed = [
+    "http://localhost:3000",
+    "https://servintec.net",
+];
+
+app.use(cors({
+    origin: allowed,
+    credentials: true,
+}));
 app.use(express.json());
 
 const server = http.createServer(app);
 
+console.log(process.env.NODE_ENV, FRONTEND)
 // WebSocket: push folder-count and folder-update events (move to inbox, new mail via periodic invalidation)
 const wsClientsByUserId = new Map();
 
