@@ -660,8 +660,12 @@ app.get("/auth/callback", async (req, res) => {
             });
         }
 
-        // redirect back to frontend (no more ?email=... needed)
-        res.redirect(`${FRONTEND}/?connected=1`);
+        // Redirect to frontend email app (FRONTEND must be the app origin, e.g. https://servintec.net, not the API)
+        let frontendOrigin = FRONTEND;
+        if (frontendOrigin && frontendOrigin.includes("api.servintec.net")) {
+            frontendOrigin = "https://servintec.net";
+        }
+        res.redirect(`${frontendOrigin}/email?connected=1`);
     } catch (err) {
         console.error("MS CALLBACK ERROR:", err.response?.data || err);
         res.status(500).send("Mailbox connect failed");
