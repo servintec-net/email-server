@@ -7,8 +7,10 @@ const cors = require("cors");
 const cron = require("node-cron");
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
+const OpenAI = require("openai");
 
 const {
+    PORT,
     SCOPES,
     CLIENT_ID,
     CLIENT_SECRET,
@@ -16,11 +18,10 @@ const {
     REDIRECT_URI,
     FRONTEND,
     POOL,
-    APP_JWT_SECRET,
+    JWT_SECRET,
     JWT_EXPIRES_IN
 } = require("./constants");
 
-const JWT_SECRET = APP_JWT_SECRET;
 const { runCategorizer } = require("./categorizer");
 const {
     collapseToLatestPerConversation,
@@ -29,15 +30,14 @@ const {
     pickGreeting,
     pickSignoff,
 } = require("./helper");
-const OpenAI = require("openai");
 const { getValidAccessToken, getMailboxRowOrThrow } = require("./token");
 
-const app = express();
 const allowed = [
     "http://localhost:3000",
     "https://servintec.net",
 ];
 
+const app = express();
 app.use(cors({
     origin: allowed,
     credentials: true,
@@ -46,8 +46,6 @@ app.use(express.json());
 
 const server = http.createServer(app);
 
-console.log(process.env.NODE_ENV, FRONTEND)
-// WebSocket: push folder-count and folder-update events (move to inbox, new mail via periodic invalidation)
 const wsClientsByUserId = new Map();
 
 const wss = new WebSocketServer({ server, path: "/ws" });
@@ -1599,8 +1597,6 @@ app.post("/folderCounts", requireAuth, async (req, res) => {
     folderCountRequestQueue.set(queueKey, requestPromise);
     await requestPromise;
 });
-
-const PORT = process.env.PORT || 4000;
 
 server.listen(PORT, () => {
     console.log(`🚀 Server running on port ${PORT}(WebSocket / ws)`);

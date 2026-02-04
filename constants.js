@@ -13,10 +13,10 @@ const AUTHORITY = process.env.AUTHORITY || "https://login.microsoftonline.com/co
 const REDIRECT_URI = process.env.REDIRECT_URI || "http://localhost:4000/auth/callback";
 const FRONTEND = process.env.FRONTEND || "http://localhost:3000";
 
-const APP_JWT_SECRET = process.env.APP_JWT_SECRET;
-if (!APP_JWT_SECRET) throw new Error("Missing APP_JWT_SECRET in env");
+const JWT_SECRET = process.env.APP_JWT_SECRET;
+if (!JWT_SECRET) throw new Error("Missing APP_JWT_SECRET in env");
 const JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN || "7d";
-
+const PORT = process.env.PORT || 4000;
 const POOL = mysql.createPool({
   host: process.env.MYSQL_HOST,
   user: process.env.MYSQL_USER,
@@ -171,7 +171,8 @@ module.exports = {
   REDIRECT_URI,
   FRONTEND,
 
-  APP_JWT_SECRET,
+  PORT,
+  JWT_SECRET,
   JWT_EXPIRES_IN,
   POOL,
 };
