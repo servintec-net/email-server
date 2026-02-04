@@ -39,7 +39,7 @@ const allowed = [
 
 const app = express();
 app.use(cors({
-    origin: allowed,
+    origin: true, // allowed,
     credentials: true,
 }));
 app.use(express.json());
