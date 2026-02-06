@@ -1,4 +1,8 @@
+// Load .env; in production also load .env.production so FRONTEND etc. match the repo
 require("dotenv").config();
+if (process.env.NODE_ENV === "production") {
+    require("dotenv").config({ path: ".env.production" });
+}
 const http = require("http");
 const express = require("express");
 const { WebSocketServer } = require("ws");
@@ -665,6 +669,7 @@ app.get("/auth/callback", async (req, res) => {
         if (frontendOrigin && frontendOrigin.includes("api.servintec.net")) {
             frontendOrigin = "https://servintec.net";
         }
+        console.log(FRONTEND, frontendOrigin);
         res.redirect(`${frontendOrigin}/email?connected=1`);
     } catch (err) {
         console.error("MS CALLBACK ERROR:", err.response?.data || err);
